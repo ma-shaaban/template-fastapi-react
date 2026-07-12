@@ -7,6 +7,9 @@ metadata:
   description: FastAPI + React app on the nezam platform
   annotations:
     github.com/project-slug: __USER__/__APP__
+    # Backstage Kubernetes plugin (027): matches the kubernetes-id annotation on
+    # the base Deployment + Service so the portal surfaces pod/replica status.
+    backstage.io/kubernetes-id: __APP__
 spec:
   type: service
   lifecycle: experimental

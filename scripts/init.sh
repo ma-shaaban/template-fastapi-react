@@ -15,7 +15,7 @@ grep -rq "__APP__" deploy catalog-info.yaml || { echo "no placeholders left — 
 
 # sed -i is not portable (BSD/macOS sed wants `-i ''`, GNU wants `-i`), so
 # write to a temp file and move it into place instead.
-for f in deploy/base/*.yaml deploy/staging/*.yaml deploy/prod/*.yaml catalog-info.yaml; do
+for f in deploy/base/*.yaml deploy/staging/*.yaml deploy/prod/*.yaml deploy/preview/*.yaml catalog-info.yaml; do
   tmp="$(mktemp)"
   sed -e "s/__USER__/$USER_ARG/g" -e "s/__APP__/$APP_ARG/g" "$f" >"$tmp"
   mv "$tmp" "$f"
