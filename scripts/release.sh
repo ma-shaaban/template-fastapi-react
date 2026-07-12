@@ -15,7 +15,11 @@ if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
   echo "tag v$VERSION already exists"; exit 1
 fi
 
-sed -i "s/newTag: .*/newTag: $VERSION/" deploy/prod/kustomization.yaml
+# sed -i is not portable (BSD/macOS sed wants `-i ''`, GNU wants `-i`), so
+# write to a temp file and move it into place instead.
+tmp="$(mktemp)"
+sed "s/newTag: .*/newTag: $VERSION/" deploy/prod/kustomization.yaml >"$tmp"
+mv "$tmp" deploy/prod/kustomization.yaml
 git add deploy/prod/kustomization.yaml
 git commit -m "release: v$VERSION"
 # Annotated (-m): plays nice with tag-signing git configs and release tooling.
