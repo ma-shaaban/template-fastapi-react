@@ -59,6 +59,14 @@ jobs:
 
       # Staging deploy = a git commit (auditable; rollback = revert). Tag
       # builds skip this — prod is pinned by scripts/release.sh instead.
+      #
+      # `main` is branch-protected (1 review + enforce_admins), so we can't push
+      # the deploy-tag commit there. Instead we publish it to a dedicated,
+      # unprotected `deploy` branch that Flux's staging source tracks. The
+      # `deploy` branch is fully generated = the built `main` commit + the
+      # resolved staging image tag, so a force-push is correct: it always
+      # equals the commit we just built from. Pushing to `deploy` does NOT
+      # retrigger CI (trigger is main-only; `[skip ci]` is belt-and-braces).
       - name: Write back staging image tag
         # Only on push to main (not pull_request events, not tags).
         if: github.event_name == 'push' && github.ref_type == 'branch'
@@ -67,27 +75,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Re-apply-and-retry: another push can land between checkout and our
-          # push. Rebasing our commit would conflict (both sides edit the same
-          # newTag line), so instead each attempt starts from the FRESH remote
-          # tip, re-runs the sed there, and pushes; on rejection, repeat.
-          for attempt in 1 2 3; do
-            git fetch origin main
-            git reset --hard origin/main
-            sed -i "s/newTag: .*/newTag: ${VERSION}/" deploy/staging/kustomization.yaml
-            if git diff --quiet; then
-              echo "staging already at ${VERSION}; nothing to write back"
-              exit 0
-            fi
+          # Reset `deploy` to the exact commit we built from (main's current
+          # HEAD), then apply the resolved staging tag on top of it.
+          git checkout -B deploy
+          sed -i "s/newTag: .*/newTag: ${VERSION}/" deploy/staging/kustomization.yaml
+          if git diff --quiet; then
+            echo "staging already at ${VERSION}; deploy == built commit"
+          else
             git add deploy/staging/kustomization.yaml
             git commit -m "[skip ci] deploy: staging → ${VERSION}"
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "push rejected (attempt ${attempt}/3); retrying from fresh remote tip"
-          done
-          echo "writeback failed after 3 attempts" >&2
-          exit 1
+          fi
+          # Force-push: `deploy` is a generated branch (main + resolved tag).
+          git push -f origin deploy
 
   # Preview-environment image build — triggered on labeled PRs only.
   # IMPORTANT: this job runs ONLY for same-repo (head-branch) PRs; fork PRs
