@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Stage 1 — build the React SPA.
-FROM node:22-slim AS frontend
+# node:24 = active LTS (v24 LTS since 2025-10; v26 goes LTS 2026-10).
+FROM node:24-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
