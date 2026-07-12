@@ -28,6 +28,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        # Do NOT persist the checkout token as an http.<url>.extraheader.
+        # peter-evans/create-pull-request installs its own Authorization
+        # extraheader from its `token` input; if checkout leaves one behind
+        # too, current git sends BOTH headers and GitHub rejects the request
+        # with `Duplicate header: "Authorization"` → HTTP 400 → exit 128.
+        # No other step in this job relies on checkout's git credentials
+        # (docker/GHCR use their own auth; the sed edit is local-only), so
+        # dropping the persisted creds is safe and fixes the deploy-PR step.
+        with:
+          persist-credentials: false
 
       - name: Compute image ref
         id: ref
@@ -81,7 +91,7 @@ jobs:
       - name: Open staging deploy PR
         id: deploy_pr
         if: github.event_name == 'push' && github.ref_type == 'branch'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           base: main
