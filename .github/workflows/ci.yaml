@@ -57,14 +57,26 @@ jobs:
         env:
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
-          sed -i "s/newTag: .*/newTag: ${VERSION}/" deploy/staging/kustomization.yaml
-          if git diff --quiet; then
-            echo "staging already at ${VERSION}; nothing to write back"
-            exit 0
-          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/staging/kustomization.yaml
-          git commit -m "[skip ci] deploy: staging → ${VERSION}"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          # Re-apply-and-retry: another push can land between checkout and our
+          # push. Rebasing our commit would conflict (both sides edit the same
+          # newTag line), so instead each attempt starts from the FRESH remote
+          # tip, re-runs the sed there, and pushes; on rejection, repeat.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            sed -i "s/newTag: .*/newTag: ${VERSION}/" deploy/staging/kustomization.yaml
+            if git diff --quiet; then
+              echo "staging already at ${VERSION}; nothing to write back"
+              exit 0
+            fi
+            git add deploy/staging/kustomization.yaml
+            git commit -m "[skip ci] deploy: staging → ${VERSION}"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}/3); retrying from fresh remote tip"
+          done
+          echo "writeback failed after 3 attempts" >&2
+          exit 1
