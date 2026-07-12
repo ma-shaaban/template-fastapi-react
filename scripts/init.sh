@@ -13,8 +13,12 @@ USER_ARG="$1"; APP_ARG="$2"
 grep -rq "__APP__" deploy catalog-info.yaml || { echo "no placeholders left — already initialized?"; exit 1; }
 [[ -z "$(git status --porcelain)" ]] || { echo "working tree not clean — commit or stash first"; exit 1; }
 
+# sed -i is not portable (BSD/macOS sed wants `-i ''`, GNU wants `-i`), so
+# write to a temp file and move it into place instead.
 for f in deploy/base/*.yaml deploy/staging/*.yaml deploy/prod/*.yaml catalog-info.yaml; do
-  sed -i -e "s/__USER__/$USER_ARG/g" -e "s/__APP__/$APP_ARG/g" "$f"
+  tmp="$(mktemp)"
+  sed -e "s/__USER__/$USER_ARG/g" -e "s/__APP__/$APP_ARG/g" "$f" >"$tmp"
+  mv "$tmp" "$f"
 done
 
 git add deploy catalog-info.yaml
