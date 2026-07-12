@@ -1,0 +1,13 @@
+# Backstage catalog stub — picked up by the platform portal's catalog
+# discovery. init.sh fills the placeholders.
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: __APP__
+  description: FastAPI + React app on the nezam platform
+  annotations:
+    github.com/project-slug: __USER__/__APP__
+spec:
+  type: service
+  lifecycle: experimental
+  owner: __USER__
