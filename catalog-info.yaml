@@ -6,7 +6,10 @@ metadata:
   name: __APP__
   description: FastAPI + React app on the nezam platform
   annotations:
+    # CI/CD tab: surfaces this repo's GitHub Actions runs in Backstage.
     github.com/project-slug: __USER__/__APP__
+    # Docs tab: render this repo's TechDocs (mkdocs.yml + docs/) inline.
+    backstage.io/techdocs-ref: dir:.
     # Backstage Kubernetes plugin (027): matches the kubernetes-id annotation on
     # the base Deployment + Service so the portal surfaces pod/replica status.
     backstage.io/kubernetes-id: __APP__
