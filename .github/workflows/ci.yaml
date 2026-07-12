@@ -17,7 +17,8 @@ on:
     # via `if: contains(github.event.pull_request.labels.*.name, 'preview')`.
 
 permissions:
-  contents: write # writeback commit to deploy/staging
+  contents: write # push the deploy PR branch (deploy/staging-<version>)
+  pull-requests: write # open the staging deploy-tag writeback PR onto main
   packages: write # push to GHCR (same-repo PRs inherit write token; fork PRs
                   # receive read-only token — preview builds are unsupported for
                   # forks (security boundary; see README).
@@ -57,36 +58,63 @@ jobs:
           build-args: |
             VERSION=${{ steps.ref.outputs.version }}
 
-      # Staging deploy = a git commit (auditable; rollback = revert). Tag
-      # builds skip this — prod is pinned by scripts/release.sh instead.
+      # Staging deploy = a git commit on `main` (auditable; rollback = revert).
+      # Tag builds skip this — prod is pinned by scripts/release.sh instead.
       #
-      # `main` is branch-protected (1 review + enforce_admins), so we can't push
-      # the deploy-tag commit there. Instead we publish it to a dedicated,
-      # unprotected `deploy` branch that Flux's staging source tracks. The
-      # `deploy` branch is fully generated = the built `main` commit + the
-      # resolved staging image tag, so a force-push is correct: it always
-      # equals the commit we just built from. Pushing to `deploy` does NOT
-      # retrigger CI (trigger is main-only; `[skip ci]` is belt-and-braces).
-      - name: Write back staging image tag
+      # Trunk-based: `main` is the single source of truth (branch-protected, 1
+      # required review). CI must NOT direct-push to main, so it opens a
+      # short-lived PR that bumps ONLY deploy/staging/kustomization.yaml, then
+      # enables auto-merge (squash). The owner's single approval lands it.
+      #
+      # No build loop: on squash-merge we set the merge commit subject to the
+      # `[skip ci]` message, so the resulting push to main is ignored by this
+      # workflow (paths-ignore on deploy/staging/kustomization.yaml is a second
+      # guard, since the PR only touches that file).
+      - name: Update staging image tag
         # Only on push to main (not pull_request events, not tags).
         if: github.event_name == 'push' && github.ref_type == 'branch'
         env:
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Reset `deploy` to the exact commit we built from (main's current
-          # HEAD), then apply the resolved staging tag on top of it.
-          git checkout -B deploy
           sed -i "s/newTag: .*/newTag: ${VERSION}/" deploy/staging/kustomization.yaml
-          if git diff --quiet; then
-            echo "staging already at ${VERSION}; deploy == built commit"
-          else
-            git add deploy/staging/kustomization.yaml
-            git commit -m "[skip ci] deploy: staging → ${VERSION}"
-          fi
-          # Force-push: `deploy` is a generated branch (main + resolved tag).
-          git push -f origin deploy
+
+      - name: Open staging deploy PR
+        id: deploy_pr
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: main
+          # Unique per run — short-commit-hash suffix appends the built sha so
+          # concurrent/rapid pushes don't collide on the PR branch.
+          branch: deploy/staging-${{ steps.ref.outputs.version }}
+          branch-suffix: short-commit-hash
+          delete-branch: true
+          # Commit ONLY the staging tag bump — ignore any other workspace churn.
+          add-paths: deploy/staging/kustomization.yaml
+          commit-message: "deploy: staging → ${{ steps.ref.outputs.version }} [skip ci]"
+          title: "deploy: staging → ${{ steps.ref.outputs.version }} [skip ci]"
+          body: |
+            Approve to release this build to staging.
+
+            Bumps `deploy/staging/kustomization.yaml` to `${{ steps.ref.outputs.version }}`.
+            Auto-merge (squash) is enabled — your single approval lands it.
+
+      # Enable auto-merge (squash) so the owner's one approval merges the PR.
+      # --subject carries `[skip ci]` onto the squashed merge commit, which
+      # prevents the merge from re-triggering this workflow (no build loop).
+      # The CI never approves the PR — a bot can't; the human owner does.
+      - name: Enable auto-merge on staging deploy PR
+        if: >
+          github.event_name == 'push' && github.ref_type == 'branch' &&
+          steps.deploy_pr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.deploy_pr.outputs.pull-request-number }}
+          VERSION: ${{ steps.ref.outputs.version }}
+        run: |
+          gh pr merge "$PR_NUMBER" --auto --squash \
+            --subject "deploy: staging → ${VERSION} [skip ci]"
 
   # Preview-environment image build — triggered on labeled PRs only.
   # IMPORTANT: this job runs ONLY for same-repo (head-branch) PRs; fork PRs
