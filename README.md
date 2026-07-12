@@ -66,15 +66,45 @@ never turns into a crashloop). Add schema:
 cd backend && alembic revision -m "add my_table"
 ```
 
+## Preview environments
+
+Label a same-repo PR `preview` to spin up an ephemeral environment at
+`https://<app>-pr-<n>.nezam.site` within ~10 minutes (Flux default poll).
+
+**How it works:**
+
+1. Labeling the PR triggers CI to build `ghcr.io/<user>/<app>:pr-<n>-<sha>`.
+2. The platform's Flux ResourceSetInputProvider detects the label and stamps
+   a namespace + Kustomization pointing at `deploy/preview` with Flux
+   `postBuild.substitute` vars `PR_ID=<n>` and `PR_SHA_SHORT=<sha>`.
+3. Every push to the PR branch (with the label active) rebuilds the image and
+   Flux rolls it forward automatically.
+4. Removing the label, merging, or closing the PR triggers Flux staged GC —
+   the namespace and all resources are removed cleanly.
+5. A stale-reaper CronJob removes the `preview` label from PRs with no new
+   commits in 72 hours; the env is garbage-collected within one poll cycle.
+
+**Constraints:**
+
+- Maximum **2 concurrent** preview environments per app (platform cap).
+- **Fork PRs are not supported.** GitHub grants fork-PR workflows a read-only
+  `GITHUB_TOKEN`; pushing the preview image to GHCR requires write access.
+  Only same-repo branch PRs (teammates with write access to the repo) can use
+  previews.
+- The preview overlay deploys 1 replica with no autoscaling. It uses the same
+  DB secret injection as staging — the platform stamps an isolated per-PR
+  Postgres database (CNPG `Database` CR) so preview data is never commingled
+  with staging or prod.
+
 ## What's where
 
 | Path | What |
 |---|---|
 | `frontend/` | Vite + React SPA (one demo page hitting the API) |
 | `backend/` | FastAPI: `/api/hello`, `/api/db-check`, `/api/version`, `/healthz`; serves the built SPA at `/` |
-| `deploy/` | kustomize base + staging/prod overlays (Deployment, Service, HTTPRoute) |
+| `deploy/` | kustomize base + staging/prod/preview overlays (Deployment, Service, HTTPRoute) |
 | `Dockerfile` | multi-stage: node build → python:3.12-slim runtime |
-| `.github/workflows/ci.yaml` | build+push image; staging writeback on main; release build on `v*` tags |
+| `.github/workflows/ci.yaml` | build+push image; staging writeback on main; release build on `v*` tags; preview build on labeled PRs |
 | `scripts/release.sh` | cut a prod release |
 | `scripts/init.sh` | one-time placeholder substitution |
 | `catalog-info.yaml` | Backstage/portal catalog stub |

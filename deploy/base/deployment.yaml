@@ -2,6 +2,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: __APP__
+  annotations:
+    # Backstage (027): links this workload to the catalog component.
+    backstage.io/kubernetes-id: __APP__
 spec:
   replicas: 1
   selector:
