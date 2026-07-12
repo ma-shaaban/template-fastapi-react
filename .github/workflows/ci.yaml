@@ -107,9 +107,14 @@ jobs:
 
       - name: Compute preview image ref
         id: ref
+        # HEAD sha, not GITHUB_SHA: on pull_request events GITHUB_SHA is the
+        # synthetic MERGE commit — the platform's ResourceSetInputProvider
+        # exports the PR HEAD sha and substitutes PR_SHA_SHORT from it, so
+        # tagging with the merge sha would never match the deployed tag.
         run: |
           PR_NUM="${{ github.event.pull_request.number }}"
-          SHORT_SHA="${GITHUB_SHA::7}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          SHORT_SHA="${HEAD_SHA::7}"
           echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >>"$GITHUB_OUTPUT"
           echo "tag=pr-${PR_NUM}-${SHORT_SHA}"         >>"$GITHUB_OUTPUT"
           echo "version=pr-${PR_NUM}-${SHORT_SHA}"     >>"$GITHUB_OUTPUT"
