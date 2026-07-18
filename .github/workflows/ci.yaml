@@ -105,16 +105,21 @@ jobs:
           commit-message: "deploy: staging → ${{ steps.ref.outputs.version }} [skip ci]"
           title: "deploy: staging → ${{ steps.ref.outputs.version }} [skip ci]"
           body: |
-            Approve to release this build to staging.
+            Staging release audit trail (auto-merged — ADR-028, gate suspended).
 
             Bumps `deploy/staging/kustomization.yaml` to `${{ steps.ref.outputs.version }}`.
-            Auto-merge (squash) is enabled — your single approval lands it.
 
-      # Enable auto-merge (squash) so the owner's one approval merges the PR.
-      # --subject carries `[skip ci]` onto the squashed merge commit, which
-      # prevents the merge from re-triggering this workflow (no build loop).
-      # The CI never approves the PR — a bot can't; the human owner does.
-      - name: Enable auto-merge on staging deploy PR
+      # ── GATE SUSPENDED (ADR-028, owner ruling 2026-07-18: UX > security
+      # for now) ── This used to enable auto-merge (`--auto`) so the OWNER's
+      # one approval landed the deploy (main was branch-protected at 1 review;
+      # ADR-025). The owner suspended the gate: main is now created
+      # UNPROTECTED (scaffolder publish:github protectDefaultBranch:false) and
+      # CI merges its own deploy PR immediately. --subject still carries
+      # `[skip ci]` so the merge never re-triggers this workflow (no build
+      # loop; GITHUB_TOKEN pushes don't trigger workflows anyway).
+      # TO RESTORE THE GATE: add `--auto` back below AND re-enable
+      # protectDefaultBranch in the create-app scaffolder template.
+      - name: Merge staging deploy PR (gate suspended — ADR-028)
         if: >
           github.event_name == 'push' && github.ref_type == 'branch' &&
           steps.deploy_pr.outputs.pull-request-number
@@ -123,7 +128,7 @@ jobs:
           PR_NUMBER: ${{ steps.deploy_pr.outputs.pull-request-number }}
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
-          gh pr merge "$PR_NUMBER" --auto --squash \
+          gh pr merge "$PR_NUMBER" --squash \
             --subject "deploy: staging → ${VERSION} [skip ci]"
 
   # Preview-environment image build — triggered on labeled PRs only.
