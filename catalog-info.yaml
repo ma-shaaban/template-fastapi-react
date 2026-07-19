@@ -16,7 +16,7 @@ metadata:
     # Template provenance (platform ticket 036): which template + version this
     # app was scaffolded from. The portal catalog queries these; the AGENTS.md
     # upgrade skill reads template-version as the app's current level.
-    # __TEMPLATE_VERSION__ is filled from the template's VERSION file by
+    # The version value below is filled from the template's VERSION file by
     # scripts/init.sh (or the portal scaffolder), which then DELETES VERSION —
     # this annotation is the app's only record.
     nezam.space/template-repo: nezam-org/template-fastapi-react
