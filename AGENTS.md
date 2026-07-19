@@ -165,9 +165,12 @@ Run this when the user asks for an upgrade (or accepts your offer). Needs the
    — `.files[]` carries `filename`, `status`, `patch`. If a `patch` is
    missing/truncated, read the whole file at the target:
    `gh api "repos/nezam-org/template-fastapi-react/contents/<path>?ref=<target>" --jq .content | base64 -d`.
-3. **Translate template-speak.** The template uses literal placeholders — map
-   them before applying anything: `__USER__` → this repo's owner, `__APP__` →
-   this repo's name, `__TEMPLATE_VERSION__` → the TARGET tag.
+3. **Translate template-speak.** The template's raw files use literal
+   double-underscore placeholder tokens (USER, APP, TEMPLATE_VERSION wrapped
+   in `__`) — this file can't spell them out, or scaffolding would substitute
+   them here too. Map them before applying anything: the USER token → this
+   repo's owner, the APP token → this repo's name, the TEMPLATE_VERSION
+   token → the TARGET tag.
 4. **Apply the delta as INTENT, file by file — never as a blind patch.**
    - File unchanged since scaffold → apply the change directly.
    - File diverged here → understand what the template change ACHIEVES and
