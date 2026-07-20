@@ -4,6 +4,71 @@ Read this first. This file tells an AI coding agent how **this specific app**
 is built, what it may change freely, and — critically — how deploys work so a
 change doesn't break the platform contract.
 
+## Agent rules — read on entry
+
+Every session starts by reading:
+
+1. This file (`AGENTS.md`)
+2. `docs/ai-tasks/context.md` — current focus / cross-task state
+3. For any task you're about to work on, resume, or whose system you're
+   about to touch: its files under `docs/ai-tasks/tasks/` — **the context
+   file (`<NNN>-context-<name>.md`) first** when it exists.
+
+### `docs/ai-tasks/` is the project's memory
+
+The authoritative source of context — ahead of training data, assumptions,
+and anything you think you remember. The scaffold ships the skeleton empty;
+you fill it from the first session onward. Layout:
+
+- `specs/` — approved designs (what/why per feature)
+- `plans/` — implementation plans
+- `tasks/{backlog,todo,in-progress,done}/` — the kanban board. One task =
+  **paired files**:
+  - `<NNN>-<kebab-name>.md` — summary: what / why / result, written so the
+    **owner** can read it (plain language)
+  - `<NNN>-context-<kebab-name>.md` — **build-ready context** for agents:
+    concrete file paths, code snippets, exact commands, API/schema shapes,
+    traps to avoid, acceptance checks, and an append-only decision log.
+    Test: could a fresh session build the task from this file alone? If
+    not, it's incomplete.
+- `context.md` — focus ledger (`focus:` + `lastVerified:` frontmatter),
+  updated at every milestone
+
+Before acting: working on or resuming a task → read its context file first.
+Touching an existing system → read the `done/` task that built it instead of
+reverse-engineering. Making a decision that overlaps prior work → check the
+decision log so you don't relitigate a settled call. Context that's missing
+is a gap to **fill** in the files, not to guess around.
+
+These files live under `docs/` but are deliberately NOT in the `mkdocs.yml`
+nav — they're internal working state, not owner documentation.
+
+### Task lifecycle
+
+Status is the folder — `git mv` is the only state transition (never a
+`status:` frontmatter field):
+
+1. **backlog/** — captured ideas; summary file only is fine
+2. **todo/** — committed to; summary + build-ready context both exist
+   (context is written on this transition)
+3. **in-progress/** — actively worked; keep the plan + decision log current
+4. **done/** — fill the summary's Result section, `git mv` both files
+
+Blocked → stays in `in-progress/` with the blocker noted in the context
+file. Demoting is fine; keep the context file.
+
+### Update discipline (load-bearing)
+
+- **After every change, audit for staleness — proactively.** The doc set:
+  this file, `README.md`, `docs/`, `docs/ai-tasks/`. If your change makes
+  any of them inaccurate, fix them in the same commit. Stale docs are
+  worse than missing docs.
+- Non-obvious decisions go in the task's decision log — append-only;
+  supersede, never edit past entries.
+- Update `lastVerified:` when re-confirming a context file against
+  current reality.
+- Style for these files: terse, headers and lists, no emoji unless asked.
+
 ## What this is
 
 A **FastAPI + React** app scaffolded on the **Nezam platform**. The React
@@ -15,32 +80,32 @@ The platform deploys that image to staging and production for you.
 
 ```
 backend/                 FastAPI app
-  app/main.py            all API routes + SPA fallback (see routes below)
-  app/__init__.py
-  requirements.txt       pinned Python deps
-  entrypoint.sh          runs `alembic upgrade head`, then starts uvicorn
-  alembic.ini
-  alembic/
-    env.py
-    versions/            DB migrations (one example: 0001_create_app_meta.py)
+  app/main.py            core routes + app-level error handlers + SPA fallback
+  app/routers/           feature routers (APIRouter modules) — put routes HERE
+  app/services/          business logic the routers call
+  tests/                 pytest suite (real Postgres; see conftest.py contract)
+  requirements.txt       pinned RUNTIME deps (ships in the image)
+  requirements-dev.txt   test-only deps (pytest, httpx) — NEVER in the image
+  entrypoint.sh          alembic upgrade head (retry + background self-heal), then uvicorn
+  alembic/versions/      DB migrations (one example: 0001_create_app_meta.py)
 frontend/                React + Vite SPA
   src/App.jsx            the demo page (hits /api/hello, /api/db-check, /api/version)
-  src/main.jsx           React entry point
-  index.html
+  src/__tests__/         Vitest tests (plain modules — see src/status.js)
   vite.config.js         dev server proxies /api + /healthz → :8080
-  package.json           react 19, vite 8
 Dockerfile               multi-stage: node build → python:3.12-slim runtime
 deploy/                  GitOps manifests — PLATFORM-MANAGED (see below)
-  base/                  Deployment, Service, HTTPRoute, kustomization
+  base/                  Deployment (incl. your resource budget), Service, HTTPRoute
   staging/               staging overlay — image tag written by CI
-  prod/                  prod overlay — image tag pinned by scripts/release.sh
+  prod/                  prod overlay — image tag pinned by the release workflow
   preview/               ephemeral per-PR overlay (Flux-substituted vars)
-.github/workflows/ci.yaml  CI: build image, staging deploy PR, release, preview
+.github/workflows/       ci.yaml (test → build → staging deploy) + release.yaml
 catalog-info.yaml        Backstage/portal catalog entry
-mkdocs.yml + docs/       TechDocs (Backstage Docs tab) — plain-language owner docs
+mkdocs.yml + docs/       TechDocs (portal Docs tab) — plain-language owner docs
+docs/ai-tasks/           YOUR memory: specs, plans, task board (not in the docs nav)
 scripts/
-  init.sh               one-time __USER__/__APP__ placeholder substitution
-  release.sh            cut a prod release (X.Y.Z)
+  dev.sh                 one-command local test loop (docker Postgres + venv + pytest)
+  init.sh                one-time placeholder substitution (portal does it for you)
+  release.sh             manual prod release fallback (prefer the release workflow)
 ```
 
 ## Current API routes (`backend/app/main.py`)
@@ -49,41 +114,90 @@ scripts/
 - `GET /api/db-check` — round-trips `SELECT now()` against Postgres; returns
   503 if the DB is unreachable (never leaks raw error text to the client).
 - `GET /api/version` — reports `APP_VERSION` (baked into the image at build).
+  **This is your deploy-verification signal** (see below).
 - `GET /healthz` — readiness; deliberately DB-free.
 - `GET /{full_path:path}` — SPA catch-all, registered **last** so every
-  `/api/*` and `/healthz` route wins. Keep new API routes above it.
+  `/api/*` and `/healthz` route wins. New routes go in `app/routers/`
+  modules, included from `main.py` **above** the catch-all.
+
+`main.py` also installs app-level handlers that turn database errors
+(unreachable DB, not-yet-applied migration) into a generic JSON 503 on every
+endpoint — keep that behavior when you add routes; never let `/api/*` return
+a text/plain 500 because the DB blipped.
 
 ## How deploys work — GET THIS RIGHT
 
-`main` is **protected**: it requires **1 approval**, and CI never
-direct-pushes to it. The flow:
+Current mode (ADR-028 — deploy gate SUSPENDED; `main` is unprotected and CI
+self-merges its own deploy PR):
 
-1. You land a change on `main` **via a Pull Request** (approved + merged).
-2. CI builds the image `ghcr.io/__USER__/__APP__:main-<shortsha>` and **opens
-   a second "staging deploy" PR** that bumps the image tag in
-   `deploy/staging/kustomization.yaml`.
-3. A **human approves** that staging-deploy PR.
-4. Auto-merge (squash, with `[skip ci]` in the commit subject so it doesn't
-   loop) lands it on `main`.
-5. **Flux** applies it → the change goes live at
-   **`https://__APP__-staging.nezam.site`** (~1 minute later).
+1. Land changes on `main` **via a Pull Request** with CI green. The `test`
+   job (pytest against real Postgres + Vitest + frontend build) gates the
+   image build — a red test means nothing ships.
+2. CI builds `ghcr.io/__USER__/__APP__:main-<shortsha>`, opens a staging
+   deploy PR bumping `deploy/staging/kustomization.yaml`, and **merges it
+   itself immediately** (squash, `[skip ci]` subject) — no human approval
+   in the loop right now.
+3. **Flux** applies it → live at **`https://__APP__-staging.nezam.site`**
+   (~3–4 min after your merge).
+4. **Verify every merge yourself**: poll `/api/version` until it equals
+   `main-<your short sha>`. Don't declare success before it does.
 
-**Production** ships only by pushing a **semver git tag** (`vX.Y.Z`) — use
-`./scripts/release.sh X.Y.Z`, which pins `deploy/prod/kustomization.yaml`,
-commits, tags, and pushes. Flux tracks semver tags → live at
-**`https://__APP__.nezam.site`**.
+**Production** ships only by a **semver git tag** (`vX.Y.Z`). Preferred:
+the *Release to Production* workflow —
+`gh workflow run release.yaml -f bump=patch|minor|major` (builds the image,
+pins `deploy/prod/kustomization.yaml`, tags, creates the GitHub Release).
+Manual fallback: `./scripts/release.sh X.Y.Z`. Flux tracks semver tags →
+live at **`https://__APP__.nezam.site`**. Release only with the owner's
+explicit go-ahead, after they've verified staging.
 
 > **NEVER hand-edit the `newTag:` image tags in `deploy/staging/` or
-> `deploy/prod/`.** CI owns the staging tag; `scripts/release.sh` owns the
+> `deploy/prod/`.** CI owns the staging tag; the release workflow owns the
 > prod tag. Editing them by hand fights the automation and breaks the deploy
 > log (every deploy is supposed to be a CI/release commit).
 
+### Deploy sharp edges (all observed live — recovery is one command)
+
+- **GitHub sometimes drops push events.** If `/api/version` hasn't reached
+  `main-<your sha>` in ~5 min, check `gh run list --branch main` — if no `ci`
+  run exists for your merge sha, the push event was lost. Retrigger:
+  `gh workflow run ci.yaml --ref main`.
+- **Wait for checks to EXIST, not just not-fail.** During GitHub Actions
+  lag, `gh pr checks --watch` can return "no checks reported" and let a
+  merge sail through unchecked. Before merging, confirm the checks are
+  actually listed (and green).
+- **Never merge an old `deploy/staging-*` PR.** CI closes superseded deploy
+  PRs automatically, but if you ever find one open that's older than the
+  newest build, close it — merging it would roll staging BACK.
+
+## Your runtime budget
+
+The platform gives each container, per environment (numbers are explicit in
+`deploy/base/deployment.yaml` so they're visible in-file):
+
+- **Default:** 25m CPU / 64Mi memory requested, **128Mi memory limit**
+  (no CPU limit).
+- **Ceiling (tenant quota, per env):** 500m CPU + 512Mi memory in requests,
+  1Gi in memory limits, 10 pods.
+
+Raising `resources:` in `deploy/base/deployment.yaml` within that quota is
+allowed and normal. But the limit is enforced by an OOM-kill, so:
+
+- **Memory-hungry libraries must be tuned to fit** — password hashing
+  (argon2id's library default is 64MiB *per hash*; two concurrent logins at
+  defaults OOM-killed a real app on this platform), image processing,
+  data-frame work. Prefer container-friendly parameters + a concurrency cap
+  over just raising the limit.
+- `pip install`-time dependency size is not the problem; **per-request
+  memory spikes are** what kills pods.
+
 ## What you may change freely
 
-- `backend/` — API routes, business logic, new alembic migrations.
+- `backend/` — routers, services, new alembic migrations.
 - `frontend/` — components, pages, styling.
-- Tests (add them under the conventions below — none exist yet).
-- `docs/` — the TechDocs pages (keep them plain-language for the owner).
+- Tests — extend `backend/tests/` and `frontend/src/__tests__/` (see
+  Conventions; the smoke tests that ship with the scaffold must stay green).
+- `docs/` — the TechDocs pages (keep them plain-language for the owner) and
+  `docs/ai-tasks/` (your working memory).
 
 ## Handle with care (the platform contract)
 
@@ -132,6 +246,24 @@ CI posts a non-blocking comment on any PR touching these paths (the
 `contract-watch` job) — that net exists for direct human edits; you should
 have warned before it fires.
 
+## Preview environments — the database is SHARED with staging
+
+Label a same-repo PR `preview` and the platform spins up an ephemeral copy at
+`https://__APP__-pr-<n>.nezam.site` (cap: 2 concurrent; fork PRs
+unsupported). Useful for showing UI work before merge. **But know this:**
+
+> **Previews run against the STAGING database** (platform ADR-024 — per-PR
+> databases don't exist yet). Migrations in a `preview`-labeled PR run
+> against live staging data BEFORE the PR is merged, and every write a
+> preview makes is visible in staging.
+
+Therefore:
+
+- **NEVER label a PR `preview` if it carries a migration** — you'd mutate
+  the staging schema from an unmerged branch.
+- Treat preview sessions as writing to staging (because they are). Don't
+  run destructive flows from a preview.
+
 ## Template version & upgrades (the upgrade skill)
 
 This app was scaffolded from a versioned platform template. The provenance
@@ -141,7 +273,7 @@ lives in `catalog-info.yaml`:
 metadata:
   annotations:
     nezam.space/template-repo: nezam-org/template-fastapi-react
-    nezam.space/template-version: v1.1.0   # the tag this app came from
+    nezam.space/template-version: v1.2.0   # the tag this app came from
 ```
 
 Template releases are git tags (`vX.Y.Z`) on the template repo. If the
@@ -176,9 +308,10 @@ Run this when the user asks for an upgrade (or accepts your offer). Needs the
    - File diverged here → understand what the template change ACHIEVES and
      re-implement that intent in the current file. NEVER revert or overwrite
      user code to make a patch apply.
-   - Skip entirely: the `VERSION` file (template-repo metadata — this app
-     doesn't carry it) and any `newTag:` value changes in
-     `deploy/*/kustomization.yaml` (deploy churn; CI owns those values here).
+   - Skip entirely: the `VERSION` and `TEMPLATE.md` files (template-repo
+     metadata — this app doesn't carry them) and any `newTag:` value changes
+     in `deploy/*/kustomization.yaml` (deploy churn; CI owns those values
+     here).
    - `catalog-info.yaml`: do NOT copy the template's file — set
      `nezam.space/template-version` to the target tag (add
      `nezam.space/template-repo` if missing) and merge only genuinely NEW
@@ -200,35 +333,110 @@ Run this when the user asks for an upgrade (or accepts your offer). Needs the
 
 ## Conventions
 
-- **FastAPI routes** go in `backend/app/main.py` (or new modules imported into
-  it), and must be registered **above** the SPA catch-all at the bottom of the
-  file. Keep `/api/*` prefixes for JSON endpoints.
+- **FastAPI routes** go in `APIRouter` modules under `backend/app/routers/`,
+  included from `app/main.py` **above** the SPA catch-all. Business logic
+  the routes call goes in `backend/app/services/`. Keep `/api/*` prefixes
+  for JSON endpoints. Don't grow `main.py` into a single-file app.
 - **DB schema changes** are alembic migrations:
   `cd backend && alembic revision -m "add my_table"` — a new file lands in
   `backend/alembic/versions/` next to `0001_create_app_meta.py`. Migrations
   run automatically on container start; keep them idempotent-safe.
 - **React components** go in `frontend/src/`. `App.jsx` is demo scaffolding —
-  replace it freely.
+  replace it freely. Logic you want tested goes in plain modules (like
+  `src/status.js`) with tests in `src/__tests__/`.
 - **Keep the single Dockerfile building** — the frontend build stage and the
   python runtime stage must both stay green.
-- **Small, reviewable PRs.** One change per PR; explain it in the PR body so
-  the owner (who may not read code) can approve with confidence.
+- **Small, reviewable PRs.** One change per PR; explain it in plain language
+  in the PR body so the owner (who may not read code) can approve with
+  confidence.
+- **Prove config at write time.** Any endpoint that stores configuration
+  consumed later by a background job must prove it works in the same request
+  (one live probe → friendly 400 on failure) or expose `last_run_at` /
+  `last_error` in the API. Never save config the runtime hasn't demonstrated
+  it can use — "saved but silently dead" features are a whole failure class.
+- **Adversarial review before merging a non-trivial PR.** While CI runs, do
+  a light find-then-try-to-refute pass focused on concurrency, external-API
+  assumptions (redirects, timeouts, shape changes), and permission gaps. Fix
+  confirmed findings in the same PR. On a real app this caught double-digit
+  pre-merge bugs at 10–20 minutes per PR.
+
+## Security checklist (when you add auth or handle user input)
+
+Building auth from scratch is where subtle bugs live. Every item below is a
+bug class that was actually caught on this platform:
+
+- **argon2id tuned for the container** — use an OWASP low-memory profile
+  (e.g. `m=19456 KiB, t=2, p=1`) plus a small concurrency cap, never library
+  defaults (64MiB per hash × concurrent requests = OOM at the 128Mi limit).
+- **Rate-limit on the RIGHTMOST `X-Forwarded-For` entry** — the gateway
+  appends the real client IP last; the leftmost entries are
+  client-spoofable.
+- **No login timing oracle** — when the username doesn't exist, verify a
+  dummy hash anyway so "user exists" and "wrong password" take the same
+  time.
+- **Commit before responding** — never leave DB work to run after the
+  response is sent (phantom writes that vanish on error).
+- **Enforce session expiry server-side** — a rolling expiry must be checked
+  and refreshed in the DB, not just via cookie `max-age`.
+- **Origin-check middleware for state-changing requests** — with
+  `SameSite=Lax` cookies, rejecting mismatched `Origin` headers on
+  POST/PATCH/PUT/DELETE blocks cross-site form posts.
+- **Never leak raw errors** — the shipped JSON-503 handler pattern: generic
+  client bodies, full tracebacks only in server logs.
 
 ## Secrets & config
 
 - **Never commit secrets.** No credentials, tokens, or connection strings in
-  the repo.
-- Database credentials and config arrive as **environment variables injected
-  by the platform** from the `app-db` Secret:
-  `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`. The backend reads
-  them in `_db_conninfo()` in `backend/app/main.py`. `APP_VERSION` is baked
-  into the image at build time.
-- Need new config? Read it from an env var (with a safe local default) and ask
-  the platform to inject it — don't hard-code values.
+  the repo — not even in `docs/ai-tasks/` context files.
+- Database credentials arrive as **environment variables injected by the
+  platform** from the `app-db` Secret: `DB_HOST`, `DB_PORT`, `DB_NAME`,
+  `DB_USER`, `DB_PASSWORD`. `APP_VERSION` is baked into the image at build
+  time.
+- **Need a NEW secret (API key, VAPID keys, …)?** There is no self-service
+  yet — the **platform owner** must add it (it's stored encrypted in the
+  platform repo and lands as a Kubernetes Secret in this app's namespaces).
+  The flow that works:
+  1. Wire the env var now with `optional: true`, so the app boots before
+     the secret exists and picks it up on the next restart after it lands:
+     ```yaml
+     - name: MY_API_KEY
+       valueFrom:
+         secretKeyRef: { name: app-secrets, key: my-api-key, optional: true }
+     ```
+     In code, read it with a safe local default and degrade gracefully
+     (feature off + clear log line) when it's unset.
+  2. Ask the owner to request the secret from the platform (key name +
+     value over a private channel — **never** through git, a PR body, or an
+     issue).
+- Non-secret config: env var with a safe local default, set via
+  `deploy/base/deployment.yaml`.
 
 ## Local dev + tests
 
-From the repo root (commands verified against this repo's README):
+**The one command** (starts a docker test Postgres, makes a venv, installs
+dev deps, runs pytest — extra args pass through to pytest):
+
+```sh
+./scripts/dev.sh            # backend tests
+./scripts/dev.sh --all      # + frontend tests + production build
+```
+
+Test infrastructure contract (already wired — don't reinvent it):
+
+- `backend/tests/conftest.py` expects Postgres with **user `app` / password
+  `test` / db `app_test`** on `localhost:5433` (override:
+  `TEST_DB_HOST`/`TEST_DB_PORT`). It applies all alembic migrations once per
+  session and truncates app tables between tests.
+- CI's `test` job runs the same suite against a Postgres **18** service
+  container (same major as the platform's shared cluster) and gates the
+  image build — you don't need to wire anything for new tests to count.
+- **Test deps go in `backend/requirements-dev.txt`**, runtime deps in
+  `backend/requirements.txt`. Never add pytest/httpx to `requirements.txt` —
+  it ships them into the production image.
+- Frontend tests are Vitest (`cd frontend && npm run test`), colocated in
+  `src/__tests__/`.
+
+Run the app itself locally:
 
 ```sh
 # Backend (terminal 1). /api/db-check returns 503 without a local Postgres — fine.
@@ -244,25 +452,26 @@ Or build the real image the way the platform does:
 docker build -t __APP__ . && docker run -p 8080:8080 __APP__
 ```
 
-**Tests:** none exist yet. When you add them, prefer `pytest` for the backend
-(add `pytest` to `backend/requirements.txt`, tests under `backend/tests/`) and
-Vitest for the frontend, and wire them into `.github/workflows/ci.yaml` if you
-want CI to run them.
-
 ## Developing with AI (the loop, for you the agent)
 
 The owner may not be a developer. Work like this:
 
-1. Take their plain-English description of the change.
+1. Take their plain-English description of the change; capture it as a task
+   in `docs/ai-tasks/tasks/` (summary + context file).
 2. Read **this file** for the guardrails, then make the change in `backend/`,
-   `frontend/`, or `docs/`.
+   `frontend/`, or `docs/`. Add/extend tests for what you changed.
 3. Open a **Pull Request** (never push to `main` directly). Explain the change
-   in plain language in the PR body so the owner can approve confidently.
-4. After merge, CI opens the **staging-deploy PR** — tell the owner to
-   **approve** it; the change then goes live on
-   `https://__APP__-staging.nezam.site`.
-5. When they're happy on staging, cut a release with
-   `./scripts/release.sh X.Y.Z` to ship to `https://__APP__.nezam.site`.
+   in plain language in the PR body so the owner can approve confidently. Run
+   the adversarial review pass while CI runs; fix findings in the same PR.
+4. After merge, staging deploys **automatically** (ADR-028 — gate
+   suspended); verify `/api/version` == `main-<sha>` on
+   `https://__APP__-staging.nezam.site` (see "Deploy sharp edges" if it
+   doesn't arrive), then tell the owner it's ready to try.
+5. When they're happy on staging and say so, release with
+   `gh workflow run release.yaml -f bump=patch|minor|major` to ship to
+   `https://__APP__.nezam.site`.
+6. Move the task to `done/`, fill in its Result, and update
+   `docs/ai-tasks/context.md` — the files, not the chat, are what persists.
 
 Keep the owner in control: **nothing reaches production without their
 approval**, and you never edit deploy image tags by hand.

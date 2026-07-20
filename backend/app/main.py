@@ -7,13 +7,29 @@ import os
 from pathlib import Path
 
 import psycopg
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="fastapi-react-app")
+
+
+@app.exception_handler(psycopg.OperationalError)
+@app.exception_handler(OperationalError)
+@app.exception_handler(ProgrammingError)
+async def _db_error_handler(request: Request, exc: Exception):
+    """DB unreachable, or schema not migrated yet (entrypoint.sh keeps retrying
+    migrations in the background). Same posture as /api/db-check: generic JSON,
+    details only in server logs — an /api/* endpoint must never surface a raw
+    text/plain 500 just because the database blipped."""
+    logger.exception("database error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Service temporarily unavailable — try again shortly"},
+    )
 
 
 def _db_conninfo() -> dict:
@@ -76,6 +92,20 @@ def healthz():
 # every non-/api, non-file GET path (the client-side router takes it from
 # there).
 _static = Path(__file__).resolve().parent.parent / "static"
+
+
+def _resolve_static_file(full_path: str) -> Path | None:
+    """A real file under the static root (any depth — icons/, sw.js, …), or
+    None. PWAs need nested paths, not just root-level files. resolve() +
+    is_relative_to() guards against path traversal."""
+    if not full_path:
+        return None
+    candidate = (_static / full_path).resolve()
+    if candidate.is_file() and candidate.is_relative_to(_static):
+        return candidate
+    return None
+
+
 if _static.is_dir():
     # Real files (Vite's hashed JS/CSS bundles) — served directly by the mount.
     if (_static / "assets").is_dir():
@@ -86,9 +116,8 @@ if _static.is_dir():
         # Unknown /api/* paths stay JSON 404s — never HTML.
         if full_path == "api" or full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
-        # Root-level real files (favicon, robots.txt, …) if they exist;
-        # resolve() + is_relative_to() guards against path traversal.
-        candidate = (_static / full_path).resolve()
-        if full_path and candidate.is_file() and candidate.is_relative_to(_static):
+        # Root-level and nested real files (favicon, manifest, icons, sw.js).
+        candidate = _resolve_static_file(full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(_static / "index.html")
