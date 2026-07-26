@@ -8,7 +8,7 @@ different things.
 **<https://__APP__-staging.nezam.site>**
 
 Staging always shows the **latest** version of your app — every change lands
-here first, automatically, within about a minute of being approved.
+here first, automatically, within a few minutes of being merged.
 
 Use staging to:
 
@@ -38,7 +38,7 @@ Use production for:
 |---|---|---|
 | Address | `__APP__-staging.nezam.site` | `__APP__.nezam.site` |
 | Shows | the latest work | released versions |
-| Updates | automatically (after you approve) | only when you release |
+| Updates | automatically (after you merge) | only when you release |
 | For | previewing & testing | your real users |
 
 **The habit:** every change appears on **staging** first. When it looks good

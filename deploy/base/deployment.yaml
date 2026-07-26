@@ -25,7 +25,21 @@ spec:
           # IfNotPresent: images may be side-loaded onto nodes (private GHCR
           # fallback path) — Always would force a registry pull and fail.
           imagePullPolicy: IfNotPresent
-          # NO resource requests/limits on purpose — the tenant LimitRange injects defaults.
+          # YOUR RUNTIME BUDGET — explicit so it's visible in-file. These
+          # mirror the platform LimitRange defaults (what you'd get if this
+          # block were absent). Raising them is ALLOWED, within the per-env
+          # tenant quota: 500m CPU requests / 512Mi memory requests / 1Gi
+          # memory limits / 10 pods. Memory-hungry work (password hashing,
+          # image processing, data frames) usually needs a higher memory
+          # limit — tune the LIBRARY to fit too, not just the limit (see
+          # AGENTS.md "Your runtime budget"). No CPU limit on purpose:
+          # throttling hurts more than it protects on this platform.
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
           env:
             - name: DB_HOST
               valueFrom:

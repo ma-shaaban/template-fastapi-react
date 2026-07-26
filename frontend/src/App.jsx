@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { statusLabel } from "./status.js";
 
 // One page that exercises the backend contract: /api/hello (static),
 // /api/db-check (SELECT now() against the platform Postgres) and
@@ -10,7 +11,7 @@ function useEndpoint(path) {
     fetch(path)
       .then(async (res) => {
         const body = await res.json();
-        setState({ status: res.ok ? "ok" : `http ${res.status}`, body });
+        setState({ status: statusLabel(res), body });
       })
       .catch((err) => setState({ status: "error", body: { detail: String(err) } }));
   }, [path]);
